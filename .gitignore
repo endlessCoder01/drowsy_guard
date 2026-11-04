@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+android/
+ios/
+*.log
+ml_training/data/
+ml_training/output/
+__pycache__/
+.venv/
+.env
+.DS_Store

@@ -1,0 +1,34 @@
+{
+  "name": "drowsyguard-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "prebuild:android": "expo prebuild --platform android",
+    "doctor": "expo-doctor",
+    "ios": "expo run:ios"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~4.0.1",
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "expo": "~52.0.49",
+    "expo-constants": "~17.0.8",
+    "expo-dev-client": "~5.0.20",
+    "expo-speech": "~13.0.1",
+    "expo-status-bar": "~2.0.1",    "expo-system-ui": "~58.0.7",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-native": "0.76.9",
+    "react-native-vision-camera": "4.6.4",
+    "react-native-vision-camera-face-detector": "1.8.5",
+    "react-native-web": "~0.19.13",
+    "react-native-worklets-core": "1.5.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "babel-preset-expo": "~12.0.11",
+    "expo-doctor": "^1.12.5"
+  }
+}

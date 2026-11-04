@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "DrowsyGuard",
+    "slug": "drowsyguard-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "scheme": "drowsyguard",
+    "android": {
+      "package": "com.drowsyguard.mobile",
+      "permissions": ["CAMERA", "VIBRATE"],
+      "adaptiveIcon": {
+        "backgroundColor": "#E5E7EB"
+      }
+    },
+    "plugins": [
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "DrowsyGuard uses the front camera to monitor visible signs of eye closure while monitoring is active.",
+          "enableMicrophonePermission": false
+        }
+      ]
+    ],
+    "extra": {
+      "description": "Offline-first research prototype for visual driver drowsiness monitoring."
+    }
+  }
+}

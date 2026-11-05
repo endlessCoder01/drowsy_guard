@@ -8,14 +8,15 @@ A low-cost, Android-first research prototype for detecting prolonged eye closure
 
 1. React Native UI (JavaScript) requests the camera permission and controls the monitoring session.
 2. VisionCamera supplies the front-camera preview.
-3. `react-native-vision-camera-face-detector` uses Google ML Kit on Android and returns face properties, including left- and right-eye-open probabilities when classification is available.
-4. The drowsiness rule marks both eyes closed when both probabilities are below the configured threshold. It tracks how long closure persists.
-5. When the duration exceeds the configured setting, the app speaks a warning, optionally vibrates and stores an event in AsyncStorage.
-6. The history and settings remain on the device. Camera frames are not saved or uploaded.
+3. `react-native-vision-camera-face-detector` uses Google ML Kit on Android to locate the face in each camera frame.
+4. The frame processor crops the two eye regions, converts them to the CNN's 64x64 grayscale input, and runs `assets/eye_state_cnn.tflite`. ML Kit eye probabilities remain a fallback if the model is unavailable.
+5. The drowsiness rule marks both eyes closed when both probabilities are below the configured threshold. It tracks how long closure persists.
+6. When the duration exceeds the configured setting, the app speaks a warning, optionally vibrates and stores an event in AsyncStorage.
+7. The history and settings remain on the device. Camera frames are not saved or uploaded.
 
 ## Important terminology
 
-The current working mobile build uses ML Kit's eye-open probability classifier plus temporal decision logic. It is a **baseline implementation** of visual drowsiness warning; it does not yet run a custom CNN or compute geometric Eye Aspect Ratio. The `ml_training` directory supplies CNN training, evaluation and `.tflite` export scripts to support the dissertation work. Custom CNN and EAR integration into a live mobile frame pipeline remains an extension, not a completed feature of this ZIP.
+The current working mobile build uses ML Kit face localization plus the bundled custom CNN's eye-open probabilities and temporal decision logic. It does not compute geometric Eye Aspect Ratio. The `ml_training` directory supplies CNN training, evaluation and `.tflite` export scripts.
 
 ## Main configurable values
 

@@ -17,14 +17,17 @@
     "expo-constants": "~17.0.8",
     "expo-dev-client": "~5.0.20",
     "expo-speech": "~13.0.1",
-    "expo-status-bar": "~2.0.1",    "expo-system-ui": "~58.0.7",
+    "expo-status-bar": "~2.0.1",
+    "expo-system-ui": "~4.0.9",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-native": "0.76.9",
+    "react-native-fast-tflite": "^2.0.0",
     "react-native-vision-camera": "4.6.4",
     "react-native-vision-camera-face-detector": "1.8.5",
     "react-native-web": "~0.19.13",
-    "react-native-worklets-core": "1.5.0"
+    "react-native-worklets-core": "1.5.0",
+    "vision-camera-resize-plugin": "^3.2.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

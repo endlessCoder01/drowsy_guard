@@ -21,6 +21,8 @@ let useCameraDevice = () => null;
 let VisionCamera = null;
 let useFrameProcessor = () => null;
 let useFaceDetector = () => ({ detectFaces: () => [] });
+let useTensorflowModel = () => ({ state: 'error', model: undefined });
+let useResizePlugin = () => ({ resize: () => null });
 let Worklets = null;
 let nativeCameraModulesAvailable = false;
 
@@ -29,6 +31,8 @@ if (canLoadNativeCamera) {
     ({ Camera: VisionCamera, useCameraDevice, useFrameProcessor } = require('react-native-vision-camera'));
     ({ useFaceDetector } = require('react-native-vision-camera-face-detector'));
     ({ Worklets } = require('react-native-worklets-core'));
+    ({ useTensorflowModel } = require('react-native-fast-tflite'));
+    ({ useResizePlugin } = require('vision-camera-resize-plugin'));
     nativeCameraModulesAvailable = true;
   } catch (error) {
     console.warn('Native camera modules are unavailable. Camera monitoring is disabled.', error);
@@ -44,6 +48,7 @@ const DEFAULT_SETTINGS = {
   audioAlerts: true,
   vibrationAlerts: true,
 };
+const EYE_MODEL = require('./assets/eye_state_cnn.tflite');
 
 const C = {
   bg: '#ECEFF1',
@@ -183,6 +188,9 @@ function InfoRow({ number, title, text }) {
 
 function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTestAlert }) {
   const device = useCameraDevice('front');
+  const cnn = useTensorflowModel(EYE_MODEL, []);
+  const cnnModel = cnn.state === 'loaded' ? cnn.model : null;
+  const { resize } = useResizePlugin();
   const faceDetectionOptions = useMemo(() => ({
     performanceMode: 'fast',
     classificationMode: 'all',
@@ -233,8 +241,12 @@ function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTe
       return;
     }
     setFaceSeen(true);
-    const leftRaw = face.leftEyeOpenProbability;
-    const rightRaw = face.rightEyeOpenProbability;
+    const leftRaw = typeof face.cnnLeftEyeOpenProbability === 'number'
+      ? face.cnnLeftEyeOpenProbability
+      : face.leftEyeOpenProbability;
+    const rightRaw = typeof face.cnnRightEyeOpenProbability === 'number'
+      ? face.cnnRightEyeOpenProbability
+      : face.rightEyeOpenProbability;
     const left = typeof leftRaw === 'number' ? leftRaw : NaN;
     const right = typeof rightRaw === 'number' ? rightRaw : NaN;
     if (!Number.isFinite(left) || !Number.isFinite(right) || left < 0 || right < 0) {
@@ -262,7 +274,9 @@ function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTe
             timestamp: new Date(now).toISOString(),
             closureDurationMs: duration,
             eyeOpenProbability: score,
-            method: 'On-device eye-open classification',
+            method: face.cnnLeftEyeOpenProbability !== undefined
+              ? 'Custom CNN eye-crop classification'
+              : 'On-device eye-open classification',
           };
           onNewEvent(event);
         }
@@ -283,8 +297,53 @@ function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTe
   const frameProcessor = useFrameProcessor((frame) => {
     'worklet';
     const faces = detectFaces(frame);
+    if (cnnModel && faces.length > 0) {
+      const tflite = cnnModel;
+      const face = faces[0];
+      const bounds = face.bounds;
+      if (bounds && bounds.width > 0 && bounds.height > 0) {
+        const eyeWidth = Math.max(8, Math.floor(bounds.width * 0.28));
+        const eyeHeight = Math.max(8, Math.floor(bounds.height * 0.22));
+        const eyeY = Math.max(0, Math.floor(bounds.y + bounds.height * 0.24));
+        const leftX = Math.max(0, Math.floor(bounds.x + bounds.width * 0.16));
+        const rightX = Math.max(0, Math.floor(bounds.x + bounds.width * 0.56));
+        const maxX = Math.max(0, frame.width - eyeWidth);
+        const maxY = Math.max(0, frame.height - eyeHeight);
+
+        const classifyEye = (x) => {
+          'worklet';
+          const crop = resize(frame, {
+            crop: {
+              x: Math.min(x, maxX),
+              y: Math.min(eyeY, maxY),
+              width: Math.min(eyeWidth, frame.width),
+              height: Math.min(eyeHeight, frame.height),
+            },
+            scale: { width: 64, height: 64 },
+            pixelFormat: 'rgb',
+            dataType: 'uint8',
+          });
+          const input = new Float32Array(64 * 64);
+          for (let i = 0; i < input.length; i += 1) {
+            const offset = i * 3;
+            input[i] = (crop[offset] + crop[offset + 1] + crop[offset + 2]) / 3;
+          }
+          const inputBuffer = input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength);
+          const outputs = tflite.runSync([inputBuffer]);
+          return new Float32Array(outputs[0])[0];
+        };
+
+        const enrichedFace = {
+          ...face,
+          cnnLeftEyeOpenProbability: classifyEye(leftX),
+          cnnRightEyeOpenProbability: classifyEye(Math.min(rightX, maxX)),
+        };
+        handleFacesDetectedOnJS([enrichedFace]);
+        return;
+      }
+    }
     handleFacesDetectedOnJS(faces);
-  }, [detectFaces, handleFacesDetectedOnJS]);
+  }, [cnnModel, detectFaces, handleFacesDetectedOnJS, resize]);
 
   const statusLabel = {
     waiting: 'Waiting for face',
@@ -331,7 +390,7 @@ function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTe
             <Text style={styles.cameraPlaceholderText}>{monitoring ? (isExpoGo ? 'Expo Go can preview the app, but live monitoring needs the DrowsyGuard development build.' : 'If this stays blank, check the camera permission and restart the app.') : 'Start a session to begin face and eye monitoring.'}</Text>
           </View>
         )}
-        {monitoring ? <View pointerEvents="none" style={styles.cameraOverlayTop}><Text style={styles.cameraOverlayText}>FRONT CAMERA · LOCAL PROCESSING</Text></View> : null}
+        {monitoring ? <View pointerEvents="none" style={styles.cameraOverlayTop}><Text style={styles.cameraOverlayText}>FRONT CAMERA · {cnn.state === 'loaded' ? 'CUSTOM CNN' : 'ML KIT FALLBACK'}</Text></View> : null}
       </View>
 
       <View style={styles.statusCard}>

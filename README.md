@@ -8,7 +8,7 @@ A grey-themed, offline-first driver drowsiness research prototype. It uses a pho
 
 - JavaScript-only React Native application (no TypeScript source files).
 - Grey themed Home, Monitor, Event History and Settings screens.
-- Front camera live preview and ML Kit face/eye-open classifications.
+- Front camera live preview, ML Kit face localization and custom CNN eye-crop classification.
 - Configurable eye-closure probability and duration threshold.
 - Spoken warning and phone vibration when prolonged closure is detected.
 - Locally saved alert history and local settings.
@@ -140,7 +140,7 @@ The output normally appears at `android\app\build\outputs\apk\debug\app-debug.ap
 
 ## CNN research workflow
 
-See [`ml_training/README.md`](ml_training/README.md). It explains how to organise labelled open/closed eye crops, train a CNN and export a `.tflite` model. The app's current real-time path uses ML Kit classification so that the first build works without needing a dataset/model download. Do not claim the mobile app runs the custom CNN until a trained model is integrated into the live frame path and the result is verified on a device.
+See [`ml_training/README.md`](ml_training/README.md). It explains how to organise labelled open/closed eye crops, train a CNN and export a `.tflite` model. The bundled `assets/eye_state_cnn.tflite` is loaded by the Android development build. ML Kit locates the face, the frame processor crops both eye regions, and the CNN probabilities drive the closure rule. Verify the model on a device after rebuilding the native project.
 
 ## Safety & privacy
 

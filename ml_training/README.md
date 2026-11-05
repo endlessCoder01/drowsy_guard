@@ -45,7 +45,7 @@ python train_eye_cnn.py --data data --output output --epochs 15
 Outputs:
 
 - `output/eye_state_cnn.keras` — Keras model.
-- `output/eye_state_cnn.tflite` — quantised TensorFlow Lite export.
+- `output/eye_state_cnn.tflite` — TensorFlow Lite export.
 - `output/metrics.json` — accuracy, precision, recall, F1 and confusion matrix.
 - `output/labels.json` — class-index mapping.
 
@@ -53,4 +53,4 @@ The class order is alphabetical: `closed = 0`, `open = 1`; the single sigmoid mo
 
 ## Important limitation
 
-Training/export is included, but a valid trained model cannot be pre-bundled from this document alone because no labelled image dataset was attached. The app remains operational with the on-device ML Kit eye-open probabilities. Integrating this custom CNN into the camera callback requires an image-cropping/resizing stage and a compatible TFLite runtime, followed by testing on the target phone. Do not claim CNN-based mobile inference until that integration is implemented and verified.
+After training, copy `output/eye_state_cnn.tflite` to `../assets/eye_state_cnn.tflite`. The Android development build uses ML Kit for face localization, crops both eyes in the VisionCamera frame processor, resizes them to 64x64 grayscale and runs the custom CNN. Rebuild the native app after copying the model, then verify classification on the target phone.

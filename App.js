@@ -328,9 +328,9 @@ function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTe
             const offset = i * 3;
             input[i] = (crop[offset] + crop[offset + 1] + crop[offset + 2]) / 3;
           }
-          const inputBuffer = input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength);
-          const outputs = tflite.runSync([inputBuffer]);
-          return new Float32Array(outputs[0])[0];
+          // fast-tflite expects typed arrays and reads their backing buffers itself.
+          const outputs = tflite.runSync([input]);
+          return outputs[0][0];
         };
 
         const enrichedFace = {

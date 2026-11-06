@@ -1,21 +1,8 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
-const parser = require('@babel/parser');
-const generate = require('@babel/generator').default;
-const t = require('@babel/types');
-
-const ROOT = path.join(__dirname, '..');
+const { deferred, moduleLoader, hookRuntime } = require('./hook-test-utils.cjs');
 const LEGACY_KEY = '@drowsyguard/events-v1';
 const SETTINGS_KEY = '@drowsyguard/settings-v1';
 const EVENT_PREFIX = '@drowsyguard/event-v2/';
-
-function deferred() {
-  let resolve;
-  const promise = new Promise((done) => { resolve = done; });
-  return { promise, resolve };
-}
 
 function event(index) {
   return {
@@ -25,29 +12,6 @@ function event(index) {
     eyeOpenProbability: 0.1,
     method: 'cnn',
   };
-}
-
-// Keep the real hooks and callbacks, replacing only the final screen JSX with
-// observable state. This avoids duplicating the history implementation in tests.
-function appUnderTest() {
-  const parsed = parser.parse(fs.readFileSync(path.join(ROOT, 'App.js'), 'utf8'), {
-    sourceType: 'module', plugins: ['jsx'],
-  });
-  const app = t.cloneNode(parsed.program.body.find((node) => (
-    t.isExportDefaultDeclaration(node) && node.declaration.id?.name === 'App'
-  )).declaration, true);
-  const finalReturn = app.body.body.findLastIndex((node) => t.isReturnStatement(node));
-  assert.ok(finalReturn >= 0 && t.isJSXElement(app.body.body[finalReturn].argument));
-  const exposed = [
-    'events', 'historyLoaded', 'historyLoading', 'historyReadError', 'historyWriteError',
-    'pendingCount', 'addEvent', 'loadHistory', 'retryHistory', 'settings', 'settingsLoaded',
-  ];
-  app.body.body[finalReturn] = t.returnStatement(t.objectExpression(exposed.map((name) => (
-    t.objectProperty(t.identifier(name), t.identifier(name), false, true)
-  ))));
-  const constants = parsed.program.body.filter((node) => t.isVariableDeclaration(node)
-    && node.declarations.some((declaration) => ['DEFAULT_SETTINGS', 'STORAGE_SETTINGS'].includes(declaration.id.name)));
-  return generate(t.program([...constants, app])).code;
 }
 
 function storageMock(legacy) {
@@ -73,93 +37,37 @@ function storageMock(legacy) {
     async removeItem() { assert.fail('history must never be removed'); },
     async clear() { assert.fail('storage must never be cleared'); },
   };
-  const source = fs.readFileSync(path.join(ROOT, 'src/storage/eventHistory.js'), 'utf8')
-    .replace(/^import AsyncStorage from [^;]+;\s*/m, '').replace(/^export /gm, '');
-  const history = vm.runInNewContext(`${source}\n({ readEvents, appendEvent, mergeEvents });`, { AsyncStorage: storage });
+  const history = moduleLoader({ '@react-native-async-storage/async-storage': storage })('src/storage/eventHistory.js');
   return { storage, history, data, failures, settingsWrites };
 }
 
-function mountApp(code, mock, overrides = {}) {
-  const slots = [];
-  let cursor = 0;
-  let dirty = true;
-  let effects = [];
-  let current;
+function mountApp(mock, overrides = {}) {
+  const runtime = hookRuntime();
   let appendCalls = 0;
-  let updaterReplays = 0;
-  const equalDeps = (left, right) => left && right && left.length === right.length
-    && left.every((value, index) => Object.is(value, right[index]));
-  const hooks = {
-    useState(initial) {
-      const index = cursor++;
-      if (!slots[index]) {
-        const slot = { value: typeof initial === 'function' ? initial() : initial };
-        slot.set = (update) => {
-          if (typeof update === 'function') {
-            update(slot.value); // React StrictMode may discard and replay an updater.
-            updaterReplays += 1;
-          }
-          const next = typeof update === 'function' ? update(slot.value) : update;
-          if (!Object.is(next, slot.value)) { slot.value = next; dirty = true; }
-        };
-        slots[index] = slot;
-      }
-      return [slots[index].value, slots[index].set];
-    },
-    useRef(initial) {
-      const index = cursor++;
-      if (!slots[index]) slots[index] = { current: initial };
-      return slots[index];
-    },
-    useCallback(callback, deps) {
-      const index = cursor++;
-      if (!slots[index] || !equalDeps(slots[index].deps, deps)) slots[index] = { value: callback, deps };
-      return slots[index].value;
-    },
-    useEffect(effect, deps) {
-      const index = cursor++;
-      if (!slots[index] || !equalDeps(slots[index].deps, deps)) {
-        const oldCleanup = slots[index]?.cleanup;
-        slots[index] = { deps };
-        effects.push(() => { oldCleanup?.(); slots[index].cleanup = effect(); });
-      }
-    },
-  };
-  const App = vm.runInNewContext(`${code}\nApp;`, {
-    ...hooks,
-    AsyncStorage: mock.storage,
-    mergeEvents: mock.history.mergeEvents,
-    readEvents: overrides.readEvents || mock.history.readEvents,
-    appendEvent: (record) => { appendCalls += 1; return mock.history.appendEvent(record); },
-    console: { warn() {} },
+  const load = moduleLoader({
+    react: runtime.hooks,
+    '@react-native-async-storage/async-storage': mock.storage,
   });
-  function render() {
-    dirty = false;
-    cursor = 0;
-    effects = [];
-    current = App();
-    effects.forEach((effect) => effect());
-  }
-  render();
+  const history = load('src/storage/eventHistory.js');
+  history.readEvents = overrides.readEvents || mock.history.readEvents;
+  history.appendEvent = (record) => { appendCalls += 1; return mock.history.appendEvent(record); };
+  const historyModule = load('src/hooks/useEventHistory.js');
+  const settingsModule = load('src/hooks/useSettings.js');
+  const useEventHistory = historyModule.default || historyModule.useEventHistory;
+  const useSettings = settingsModule.default || settingsModule.useSettings;
+  assert.equal(typeof useEventHistory, 'function');
+  assert.equal(typeof useSettings, 'function');
+  runtime.mount(() => ({ ...useEventHistory(), ...useSettings() }));
   return {
-    get state() { return current; },
+    get state() { return runtime.state; },
     get appendCalls() { return appendCalls; },
-    get updaterReplays() { return updaterReplays; },
-    async settle() {
-      // AsyncStorage mocks resolve on microtasks. Yielding the event loop also
-      // lets nested async callbacks finish before inspecting a committed render.
-      for (let turn = 0; turn < 8; turn += 1) {
-        await new Promise((resolve) => setImmediate(resolve));
-        if (dirty) render();
-      }
-      assert.equal(dirty, false, 'hook state should settle');
-      return current;
-    },
+    get updaterReplays() { return runtime.updaterReplays; },
+    settle: runtime.settle,
+    unmount: runtime.unmount,
   };
 }
 
 async function run() {
-  const code = appUnderTest();
   const legacy = Array.from({ length: 140 }, (_, index) => event(index));
   const mock = storageMock(legacy);
   const legacyRaw = mock.data.get(LEGACY_KEY);
@@ -168,7 +76,7 @@ async function run() {
   const settingsLoad = deferred();
   const getItem = mock.storage.getItem;
   mock.storage.getItem = (key) => key === SETTINGS_KEY ? settingsLoad.promise : getItem(key);
-  const app = mountApp(code, mock, { readEvents: () => hydration.promise.then(() => savedSnapshot) });
+  const app = mountApp(mock, { readEvents: () => hydration.promise.then(() => savedSnapshot) });
   assert.equal(app.state.settingsLoaded, false);
   assert.equal(mock.settingsWrites.length, 0, 'defaults must not overwrite settings before hydration');
 
@@ -210,7 +118,7 @@ async function run() {
 
   const readFailure = storageMock(legacy);
   readFailure.failures.read = true;
-  const recovering = mountApp(code, readFailure);
+  const recovering = mountApp(readFailure);
   await recovering.settle();
   assert.equal(recovering.state.historyLoaded, false);
   assert.ok(recovering.state.historyReadError);
@@ -237,7 +145,7 @@ async function run() {
     if (key === SETTINGS_KEY) throw new Error('Settings read failed');
     return readItem(key);
   };
-  const unreadSettings = mountApp(code, settingsFailure);
+  const unreadSettings = mountApp(settingsFailure);
   await unreadSettings.settle();
   assert.equal(unreadSettings.state.settingsLoaded, false);
   assert.equal(settingsFailure.settingsWrites.length, 0, 'failed settings read cannot write defaults');

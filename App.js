@@ -188,7 +188,7 @@ function InfoRow({ number, title, text }) {
 
 function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTestAlert }) {
   const device = useCameraDevice('front');
-  const cnn = useTensorflowModel(EYE_MODEL, []);
+  const cnn = useTensorflowModel(EYE_MODEL);
   const cnnModel = cnn.state === 'loaded' ? cnn.model : null;
   const { resize } = useResizePlugin();
   const faceDetectionOptions = useMemo(() => ({

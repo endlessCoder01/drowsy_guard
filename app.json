@@ -9,6 +9,7 @@
     "scheme": "drowsyguard",
     "android": {
       "package": "com.drowsyguard.mobile",
+      "minSdkVersion": 26,
       "permissions": ["CAMERA", "VIBRATE"],
       "adaptiveIcon": {
         "backgroundColor": "#E5E7EB"

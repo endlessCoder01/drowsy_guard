@@ -1,17 +1,17 @@
 # DrowsyGuard — React Native JavaScript Android app
 
-A grey-themed, offline-first driver drowsiness research prototype. It uses a phone's front camera, on-device face/eye classification, a prolonged-closure timer, spoken warning, vibration and local event history. No IoT components, paid API, cloud server or account are needed for the core app.
+A colourful, offline-first driver drowsiness research prototype. It uses a phone's front camera, on-device face/eye classification, a prolonged-closure timer, spoken warning, vibration and persistent local event history. No IoT components, paid API, cloud server or account are needed for the core app.
 
 > **Scope note:** The mobile runtime currently uses Google ML Kit eye-open probabilities provided by `react-native-vision-camera-face-detector`. The `ml_training/` folder includes the CNN training/evaluation/export path required for dissertation experimentation, but the custom trained CNN is not bundled or connected to the live camera pipeline. The current app is not yet a custom-CNN + Eye Aspect Ratio implementation. See `docs/SYSTEM_DESIGN.md`.
 
 ## What's included
 
 - JavaScript-only React Native application (no TypeScript source files).
-- Grey themed Home, Monitor, Event History and Settings screens.
+- Refreshed Home, Monitor, Event History and Settings screens.
 - Front camera live preview, ML Kit face localization and custom CNN eye-crop classification.
 - Configurable eye-closure probability and duration threshold.
 - Spoken warning and phone vibration when prolonged closure is detected.
-- Locally saved alert history and local settings.
+- Append-only alert history in AsyncStorage, with no clear control or record limit, and local settings.
 - CNN training/evaluation/export script with accuracy, precision, recall, F1 and confusion-matrix output.
 - Functional test plan and system-design notes.
 
@@ -93,7 +93,23 @@ For a scripted setup from the project root, you can also run `powershell -Execut
 4. The Monitor page shows the face state and eye-open score when available.
 5. The default alert triggers when both eyes appear closed for 1.5 seconds. Adjust the threshold/duration in Settings only for controlled testing; calibrate any research threshold with a validation dataset.
 6. Use **Test alert** to verify speech/vibration.
-7. See saved events in **History**. They are stored locally; no videos are saved.
+7. See saved events in **History**. Alerts remain across reloads and app restarts; the app never clears or truncates them. No videos are saved.
+
+### Local history retention
+
+Existing saved history from earlier app versions remains available without rewriting or removing its original records. Each new alert is stored separately in AsyncStorage, so saving a new event does not replace older alerts or apply the previous 100-record cap. History displays newest first and safely merges alerts created while saved records load.
+
+If storage fails, the app reports the problem and keeps unsaved alerts visible for retry. A successful retry does not duplicate the same alert. Unsaved alerts still require a successful write before they can survive an app restart.
+
+History stays on this app installation. Uninstalling the app or clearing its data through the operating system can remove it; there is no cloud backup.
+
+To run the storage regression checks:
+
+```powershell
+npm run test:history
+```
+
+See [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) for reload/restart, legacy-history, concurrent-write and storage-failure checks.
 
 ### 7. Start Metro separately (optional)
 

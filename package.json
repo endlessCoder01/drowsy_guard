@@ -8,9 +8,11 @@
     "android": "expo run:android",
     "prebuild:android": "expo prebuild --platform android",
     "doctor": "expo-doctor",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "test:history": "node scripts/test-event-history.cjs && node scripts/test-app-history.cjs"
   },
   "dependencies": {
+    "@expo/vector-icons": "~14.0.4",
     "@expo/metro-runtime": "~4.0.1",
     "@react-native-async-storage/async-storage": "1.23.1",
     "expo": "~52.0.49",

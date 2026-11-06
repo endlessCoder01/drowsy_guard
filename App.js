@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  FlatList,
+  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -14,6 +16,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import * as Speech from 'expo-speech';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { readEvents, appendEvent, mergeEvents } from './src/storage/eventHistory';
+import { C, styles } from './src/ui/theme';
+import { LiveDot, RadarVisual, ScreenEntrance } from './src/ui/Visuals';
 
 const isExpoGo = Platform.OS !== 'web' && Constants.executionEnvironment === 'storeClient';
 const canLoadNativeCamera = Platform.OS !== 'web' && !isExpoGo;
@@ -39,7 +45,6 @@ if (canLoadNativeCamera) {
   }
 }
 
-const STORAGE_EVENTS = '@drowsyguard/events-v1';
 const STORAGE_SETTINGS = '@drowsyguard/settings-v1';
 const DEFAULT_SETTINGS = {
   eyeClosedProbability: 0.25,
@@ -50,20 +55,7 @@ const DEFAULT_SETTINGS = {
 };
 const EYE_MODEL = require('./assets/eye_state_cnn.tflite');
 
-const C = {
-  bg: '#ECEFF1',
-  card: '#FFFFFF',
-  cardSoft: '#F5F6F7',
-  text: '#24272B',
-  muted: '#6B7077',
-  lightMuted: '#92979E',
-  border: '#D5D9DE',
-  dark: '#34383E',
-  darker: '#202328',
-  softDark: '#454A51',
-  disabled: '#B8BDC3',
-  black: '#111315',
-};
+
 
 function formatClock(iso) {
   if (!iso) return 'No alerts yet';
@@ -75,42 +67,18 @@ function formatDuration(ms) {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
-async function readEvents() {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_EVENTS);
-    return raw ? JSON.parse(raw) : [];
-  } catch (error) {
-    console.warn('Unable to read event history', error);
-    return [];
-  }
-}
 
-async function writeEvents(events) {
-  try {
-    await AsyncStorage.setItem(STORAGE_EVENTS, JSON.stringify(events.slice(0, 100)));
-  } catch (error) {
-    console.warn('Unable to save event history', error);
-  }
-}
 
 function Pill({ label, kind = 'neutral' }) {
   const style = kind === 'dark' ? styles.pillDark : kind === 'soft' ? styles.pillSoft : styles.pill;
   return <View style={style}><Text style={kind === 'dark' ? styles.pillTextLight : styles.pillText}>{label}</Text></View>;
 }
 
-function PrimaryButton({ title, onPress, disabled = false, secondary = false, compact = false }) {
+function PrimaryButton({ title, onPress, disabled = false, secondary = false, compact = false, icon }) {
   return (
-    <TouchableOpacity
-      accessibilityRole="button"
-      onPress={onPress}
-      disabled={disabled}
-      activeOpacity={0.82}
-      style={[
-        secondary ? styles.buttonSecondary : styles.buttonPrimary,
-        compact && styles.buttonCompact,
-        disabled && styles.buttonDisabled,
-      ]}
-    >
+    <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled }} onPress={onPress} disabled={disabled} activeOpacity={0.78}
+      style={[secondary ? styles.buttonSecondary : styles.buttonPrimary, compact && styles.buttonCompact, disabled && styles.buttonDisabled]}>
+      {icon ? <Ionicons name={icon} size={18} color={disabled ? C.muted : secondary ? C.text : C.darker} /> : null}
       <Text style={[secondary ? styles.buttonSecondaryText : styles.buttonPrimaryText, disabled && styles.buttonTextDisabled]}>{title}</Text>
     </TouchableOpacity>
   );
@@ -120,14 +88,15 @@ function SectionTitle({ title, action, onAction }) {
   return (
     <View style={styles.sectionHeading}>
       <Text style={styles.sectionTitle}>{title}</Text>
-      {action ? <TouchableOpacity onPress={onAction}><Text style={styles.sectionAction}>{action}</Text></TouchableOpacity> : null}
+      {action ? <TouchableOpacity accessibilityRole="button" onPress={onAction}><Text style={styles.sectionAction}>{action}</Text></TouchableOpacity> : null}
     </View>
   );
 }
 
-function StatCard({ label, value, subtitle }) {
+function StatCard({ label, value, subtitle, icon, color, background }) {
   return (
     <View style={styles.statCard}>
+      <View style={[styles.statIcon, { backgroundColor: background }]}><Ionicons name={icon} size={19} color={color} /></View>
       <Text style={styles.statLabel}>{label}</Text>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statSubtitle}>{subtitle}</Text>
@@ -135,55 +104,60 @@ function StatCard({ label, value, subtitle }) {
   );
 }
 
-function DashboardScreen({ events, onStart, onTab }) {
+function EventRow({ event }) {
+  return (
+    <View style={styles.eventRow}>
+      <View style={styles.eventIcon}><Ionicons name="alert-outline" size={23} color={C.coral} /></View>
+      <View style={styles.eventBody}>
+        <Text style={styles.eventTitle}>Eye-closure alert</Text>
+        <Text style={styles.eventSub}>{formatClock(event.timestamp)}</Text>
+        <Text style={styles.eventSub}>Eye-open score {Math.round((event.eyeOpenProbability || 0) * 100)}%</Text>
+      </View>
+      <Text style={styles.eventDuration}>{formatDuration(event.closureDurationMs || 0)}</Text>
+    </View>
+  );
+}
+
+function DashboardScreen({ events, historyLoaded, onStart, onTab }) {
   const lastEvent = events[0];
+  const today = new Date().toDateString();
+  const todayCount = events.filter((event) => new Date(event.timestamp).toDateString() === today).length;
   return (
     <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
+      <View><Text style={styles.greeting}>A little focus. A safer journey.</Text><Text style={styles.greetingTitle}>Hello, road ahead.</Text></View>
       <View style={styles.heroCard}>
-        <View style={styles.heroTopRow}>
-          <View style={styles.brandMark}><Text style={styles.brandMarkText}>DG</Text></View>
-          <Pill label="ON-DEVICE" kind="dark" />
-        </View>
-        <Text style={styles.heroEyebrow}>DRIVER SAFETY MONITOR</Text>
-        <Text style={styles.heroTitle}>Stay alert.{ '\n' }Arrive safely.</Text>
-        <Text style={styles.heroCopy}>A camera-based research prototype that checks visible eye-closure indicators and warns when closure lasts longer than your configured threshold.</Text>
-        <PrimaryButton title="Start monitoring  →" onPress={onStart} />
-        <Text style={styles.heroFootnote}>Keep the phone securely mounted and the driver's face visible.</Text>
+        <View style={styles.heroTopRow}><Text style={styles.heroEyebrow}>YOUR DAILY CO-PILOT</Text><Pill label="ON DEVICE" kind="dark" /></View>
+        <Text style={styles.heroTitle}>Stay present.{'\n'}<Text style={styles.heroAccent}>Go further.</Text></Text>
+        <Text style={styles.heroCopy}>A watchful eye for the road ahead. Get a gentle heads-up when your eyes stay closed too long.</Text>
+        <RadarVisual />
+        <PrimaryButton title="Let's start monitoring" icon="scan-outline" onPress={onStart} />
+        <Text style={styles.heroFootnote}>Mount your phone. Keep your face in view.</Text>
       </View>
-
       <View style={styles.statGrid}>
-        <StatCard label="ALERT EVENTS" value={String(events.length)} subtitle="Saved on this phone" />
-        <StatCard label="LATEST EVENT" value={lastEvent ? formatClock(lastEvent.timestamp).split(',').slice(-1)[0].trim() : '—'} subtitle={lastEvent ? formatClock(lastEvent.timestamp).split(',')[0] : 'Nothing recorded'} />
+        <StatCard label="Your alert journal" value={historyLoaded ? String(events.length) : '\u2014'} subtitle="All recorded alerts" icon="albums-outline" color={C.blue} background={C.blueSoft} />
+        <StatCard label="Recorded today" value={historyLoaded ? String(todayCount) : '\u2014'} subtitle="A snapshot of your day" icon="sunny-outline" color={C.coral} background={C.coralSoft} />
       </View>
-
-      <SectionTitle title="How it works" />
+      <View>
+        <SectionTitle title="Your latest alert" action="View journal" onAction={() => onTab('history')} />
+        {lastEvent ? <View style={styles.card}><EventRow event={lastEvent} /></View> : (
+          <View style={styles.card}><View style={styles.infoRow}><View style={[styles.numberChip, { backgroundColor: C.tealSoft }]}><Ionicons name="leaf-outline" size={21} color={C.teal} /></View><View style={styles.infoBody}><Text style={styles.infoTitle}>{historyLoaded ? 'A fresh page awaits' : 'Opening your journal'}</Text><Text style={styles.infoText}>{historyLoaded ? 'Your alerts will appear here and stay in your journal.' : 'Your saved alerts will appear once history has loaded.'}</Text></View></View></View>
+        )}
+      </View>
+      <SectionTitle title="Three steps to stay aware" />
       <View style={styles.card}>
-        <InfoRow number="01" title="Detect the face" text="On-device ML Kit classification estimates whether each eye appears open." />
+        <InfoRow icon="scan-outline" title="Find your focus" text="The front camera locates your face and checks visible eye activity." />
         <View style={styles.rowDivider} />
-        <InfoRow number="02" title="Track closure duration" text="Short blinks are ignored; persistent low eye-open probabilities trigger a warning." />
+        <InfoRow icon="timer-outline" title="Give blinks a moment" text="Brief blinks pass. Longer eye closures start your alert timer." />
         <View style={styles.rowDivider} />
-        <InfoRow number="03" title="Warn and log locally" text="The phone can speak an audible warning, vibrate and save an event without internet." />
+        <InfoRow icon="notifications-outline" title="A nudge when it matters" text="Hear or feel a warning. Each alert is added to your local journal." />
       </View>
-
-      <View style={styles.noticeCard}>
-        <Text style={styles.noticeTitle}>Research prototype</Text>
-        <Text style={styles.noticeText}>This is not a certified safety device. Test while parked or with recorded video. Never intentionally become drowsy while driving.</Text>
-      </View>
-      <PrimaryButton title="View event history" onPress={() => onTab('history')} secondary />
+      <View style={styles.noticeCard}><Ionicons name="information-circle-outline" size={21} color={C.amber} /><View style={{ flex: 1 }}><Text style={styles.noticeTitle}>A helpful research companion</Text><Text style={styles.noticeText}>This prototype is not a certified safety device. Test while parked and take a break whenever you feel tired.</Text></View></View>
     </ScrollView>
   );
 }
 
-function InfoRow({ number, title, text }) {
-  return (
-    <View style={styles.infoRow}>
-      <View style={styles.numberChip}><Text style={styles.numberChipText}>{number}</Text></View>
-      <View style={styles.infoBody}>
-        <Text style={styles.infoTitle}>{title}</Text>
-        <Text style={styles.infoText}>{text}</Text>
-      </View>
-    </View>
-  );
+function InfoRow({ icon, title, text }) {
+  return <View style={styles.infoRow}><View style={styles.numberChip}><Ionicons name={icon} size={21} color={C.blue} /></View><View style={styles.infoBody}><Text style={styles.infoTitle}>{title}</Text><Text style={styles.infoText}>{text}</Text></View></View>;
 }
 
 function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTestAlert }) {
@@ -365,6 +339,10 @@ function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTe
     stopped: 'Start a session to begin camera analysis.',
   }[monitorStatus] || '';
 
+  const statusColor = monitorStatus === 'drowsy' ? C.coral : monitorStatus === 'eyes-closing' ? C.amber : monitorStatus === 'alert' ? C.teal : C.muted;
+  const statusBackground = monitorStatus === 'drowsy' ? C.coralSoft : monitorStatus === 'eyes-closing' ? C.amberSoft : C.card;
+  const progress = Math.max(0, Math.min(100, closureDuration / settings.closureDurationMs * 100));
+
   return (
     <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
       <View style={styles.screenHeaderRow}>
@@ -385,21 +363,23 @@ function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTe
           />
         ) : (
           <View style={styles.cameraPlaceholder}>
-            <View style={styles.cameraGlyph}><Text style={styles.cameraGlyphText}>◉</Text></View>
+            <View style={styles.cameraGlyph}><Ionicons name="scan-outline" size={34} color={C.mint} /></View>
             <Text style={styles.cameraPlaceholderTitle}>{monitoring ? 'Opening camera…' : 'Camera is off'}</Text>
             <Text style={styles.cameraPlaceholderText}>{monitoring ? (isExpoGo ? 'Expo Go can preview the app, but live monitoring needs the DrowsyGuard development build.' : 'If this stays blank, check the camera permission and restart the app.') : 'Start a session to begin face and eye monitoring.'}</Text>
           </View>
         )}
-        {monitoring ? <View pointerEvents="none" style={styles.cameraOverlayTop}><Text style={styles.cameraOverlayText}>FRONT CAMERA · {cnn.state === 'loaded' ? 'CUSTOM CNN' : 'ML KIT FALLBACK'}</Text></View> : null}
+        {monitoring ? <><View pointerEvents="none" style={styles.cameraGuide} /><View pointerEvents="none" style={styles.cameraOverlayTop}><LiveDot active color={C.mint} /><Text style={styles.cameraOverlayText}>FRONT CAMERA · {cnn.state === 'loaded' ? 'CUSTOM CNN' : 'ML KIT'}</Text></View></> : null}
       </View>
 
-      <View style={styles.statusCard}>
+      <View style={[styles.statusCard, { backgroundColor: statusBackground, borderColor: monitorStatus === 'drowsy' ? '#F1C8BE' : C.border }]}>
         <View style={styles.statusHeader}>
-          <View style={[styles.statusDot, monitorStatus === 'drowsy' ? styles.statusDotDark : monitorStatus === 'alert' ? styles.statusDotLight : styles.statusDotMuted]} />
-          <Text style={styles.statusTitle}>{statusLabel}</Text>
+          <LiveDot active={monitoring && monitorStatus === 'alert'} color={statusColor} />
+          <Text style={[styles.statusTitle, { color: statusColor }]}>{statusLabel}</Text>
           <Text style={styles.statusTime}>{formatDuration(closureDuration)}</Text>
         </View>
         <Text style={styles.statusDescription}>{statusDescription}</Text>
+        <View accessibilityRole="progressbar" accessibilityLabel="Eye closure duration" accessibilityValue={{ min: 0, max: settings.closureDurationMs, now: Math.min(closureDuration, settings.closureDurationMs) }} style={styles.progressTrack}><View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: statusColor }]} /></View>
+        <View style={styles.progressLabels}><Text style={styles.progressText}>Closure timer</Text><Text style={styles.progressText}>Alert at {formatDuration(settings.closureDurationMs)}</Text></View>
         <View style={styles.metricDivider} />
         <View style={styles.metricRow}>
           <View style={styles.metricBlock}>
@@ -418,60 +398,46 @@ function MonitorScreen({ monitoring, settings, onStart, onStop, onNewEvent, onTe
       </View>
 
       <View style={styles.twoButtons}>
-        {monitoring ? <PrimaryButton title="Stop session" onPress={onStop} secondary /> : <PrimaryButton title="Start monitoring" onPress={onStart} />}
-        <PrimaryButton title="Test alert" onPress={onTestAlert} secondary />
+        <View style={styles.buttonCell}>{monitoring ? <PrimaryButton title="Stop session" icon="stop-circle-outline" onPress={onStop} secondary /> : <PrimaryButton title="Start session" icon="scan-outline" onPress={onStart} />}</View>
+        <View style={styles.buttonCell}><PrimaryButton title="Test alert" icon="volume-high-outline" onPress={onTestAlert} secondary /></View>
       </View>
-      <Text style={styles.helperText}>The eye-open score is an ML Kit classification probability, not a medical measurement. Sunglasses, darkness, head turns and camera angle may reduce reliability.</Text>
+      <Text style={styles.helperText}>Eye-open scores are model estimates, not medical measurements. Sunglasses, darkness, head turns and camera angle may reduce reliability.</Text>
     </ScrollView>
   );
 }
 
-function HistoryScreen({ events, onClear }) {
+function HistoryScreen({ events, historyLoaded, historyLoading, pendingCount }) {
   return (
-    <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
-      <View style={styles.screenHeaderRow}>
-        <View><Text style={styles.screenEyebrow}>LOCAL RECORDS</Text><Text style={styles.screenTitle}>Event history</Text></View>
-        <Pill label={`${events.length} SAVED`} kind="soft" />
-      </View>
-      <Text style={styles.screenIntro}>Only alert events are saved. Camera frames and video are not stored by this app.</Text>
-      {events.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyGlyph}>≋</Text>
-          <Text style={styles.emptyTitle}>No events recorded</Text>
-          <Text style={styles.emptyCopy}>When the eye-closure threshold is exceeded during monitoring, an event will appear here.</Text>
-        </View>
-      ) : (
-        <View style={styles.card}>
-          {events.map((event, index) => (
-            <View key={event.id || `${event.timestamp}-${index}`}>
-              {index > 0 ? <View style={styles.rowDivider} /> : null}
-              <View style={styles.eventRow}>
-                <View style={styles.eventIcon}><Text style={styles.eventIconText}>!</Text></View>
-                <View style={styles.eventBody}>
-                  <Text style={styles.eventTitle}>Prolonged eye closure</Text>
-                  <Text style={styles.eventSub}>{formatClock(event.timestamp)}</Text>
-                  <Text style={styles.eventSub}>Eye-open score: {Math.round((event.eyeOpenProbability || 0) * 100)}%</Text>
-                </View>
-                <Text style={styles.eventDuration}>{formatDuration(event.closureDurationMs || 0)}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
-      )}
-      {events.length > 0 ? <PrimaryButton title="Clear local history" onPress={onClear} secondary /> : null}
-    </ScrollView>
+    <FlatList
+      data={events}
+      keyExtractor={(event, index) => event.id || `${event.timestamp}-${index}`}
+      contentContainerStyle={[styles.screenContent, { gap: 0 }]}
+      showsVerticalScrollIndicator={false}
+      initialNumToRender={12}
+      maxToRenderPerBatch={12}
+      windowSize={7}
+      ListHeaderComponent={<View style={styles.historyHeader}>
+        <View style={styles.screenHeaderRow}><View style={{ flex: 1, minWidth: 0 }}><Text style={styles.screenEyebrow}>YOUR JOURNEY, REMEMBERED</Text><Text style={styles.screenTitle}>Alert journal</Text></View><Pill label={pendingCount ? 'PENDING' : historyLoaded ? `${events.length} RECORDS` : historyLoading ? 'LOADING' : 'UNAVAILABLE'} kind="soft" /></View>
+        <Text style={styles.screenIntro}>Every recorded alert has a place here. Your history stays on this device, with no automatic deletion.</Text>
+        <View style={styles.historySummary}><Ionicons name="shield-checkmark-outline" size={31} color={C.mint} /><View style={{ flex: 1 }}><Text style={styles.historySummaryTitle}>Your history stays with you</Text><Text style={styles.historySummaryCopy}>Saved after each alert and restored when you reopen the app. No record limit. No clear button.</Text></View></View>
+        <SectionTitle title="Recorded moments" />
+      </View>}
+      renderItem={({ item }) => <View style={styles.historyItem}><EventRow event={item} /></View>}
+      ItemSeparatorComponent={() => <View style={styles.historyGap} />}
+      ListEmptyComponent={<View style={styles.emptyCard}><View style={styles.emptyIcon}><Ionicons name="journal-outline" size={32} color={C.teal} /></View><Text style={styles.emptyTitle}>{historyLoading ? 'Opening your journal' : historyLoaded ? 'Your story starts here' : 'History is unavailable'}</Text><Text style={styles.emptyCopy}>{historyLoading ? 'Bringing back your recorded moments.' : historyLoaded ? 'When monitoring detects prolonged eye closure, the alert will be saved here.' : 'Tap Retry above to load your saved records. Existing history is kept untouched.'}</Text></View>}
+      ListFooterComponent={<View style={styles.historyFooter}><Ionicons name="lock-closed-outline" size={13} color={C.muted} /><Text style={styles.helperText}>Only alert details are stored. No photos or video.</Text></View>}
+    />
   );
 }
 
-function Stepper({ label, value, display, onDecrease, onIncrease, description }) {
+function Stepper({ label, value, display, onDecrease, onIncrease, description, min, max }) {
   return (
     <View style={styles.settingCard}>
-      <Text style={styles.settingTitle}>{label}</Text>
-      <Text style={styles.settingDescription}>{description}</Text>
+      <Text style={styles.settingTitle}>{label}</Text><Text style={styles.settingDescription}>{description}</Text>
       <View style={styles.stepperRow}>
-        <TouchableOpacity style={styles.stepperButton} onPress={onDecrease}><Text style={styles.stepperGlyph}>−</Text></TouchableOpacity>
-        <Text style={styles.stepperValue}>{display || value}</Text>
-        <TouchableOpacity style={styles.stepperButton} onPress={onIncrease}><Text style={styles.stepperGlyph}>+</Text></TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Decrease ${label}`} accessibilityState={{ disabled: value <= min }} disabled={value <= min} style={[styles.stepperButton, value <= min && { opacity: 0.4 }]} onPress={onDecrease}><Ionicons name="remove" size={23} color={C.blue} /></TouchableOpacity>
+        <Text accessibilityLiveRegion="polite" style={styles.stepperValue}>{display || value}</Text>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Increase ${label}`} accessibilityState={{ disabled: value >= max }} disabled={value >= max} style={[styles.stepperButton, value >= max && { opacity: 0.4 }]} onPress={onIncrease}><Ionicons name="add" size={23} color={C.blue} /></TouchableOpacity>
       </View>
     </View>
   );
@@ -479,7 +445,7 @@ function Stepper({ label, value, display, onDecrease, onIncrease, description })
 
 function ToggleRow({ label, description, value, onToggle }) {
   return (
-    <TouchableOpacity style={styles.toggleRow} onPress={onToggle} activeOpacity={0.8}>
+    <TouchableOpacity accessibilityRole="switch" accessibilityLabel={label} accessibilityHint={description} accessibilityState={{ checked: value }} style={styles.toggleRow} onPress={onToggle} activeOpacity={0.8}>
       <View style={styles.toggleBody}><Text style={styles.settingTitle}>{label}</Text><Text style={styles.settingDescription}>{description}</Text></View>
       <View style={[styles.toggleTrack, value && styles.toggleTrackOn]}><View style={[styles.toggleKnob, value && styles.toggleKnobOn]} /></View>
     </TouchableOpacity>
@@ -495,43 +461,34 @@ function SettingsScreen({ settings, setSettings, onTestAlert }) {
     <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
       <View style={styles.screenHeaderRow}>
         <View><Text style={styles.screenEyebrow}>PERSONALISE</Text><Text style={styles.screenTitle}>Settings</Text></View>
-        <Pill label="LOCAL ONLY" kind="soft" />
+        <View style={styles.settingsHeaderIcon}><Ionicons name="options-outline" size={24} color={C.blue} /></View>
       </View>
-      <Text style={styles.screenIntro}>These values configure the research prototype. Calibrate them on validation data before reporting performance.</Text>
-      <Stepper label="Eye-closed probability" description="An eye is considered closed below this probability. Lower values may be less sensitive." value={settings.eyeClosedProbability} display={settings.eyeClosedProbability.toFixed(2)} onDecrease={() => adjust('eyeClosedProbability', -0.05, 0.10, 0.50)} onIncrease={() => adjust('eyeClosedProbability', 0.05, 0.10, 0.50)} />
-      <Stepper label="Closure duration" description="How long both eyes must remain below the threshold before an alert." value={settings.closureDurationMs} display={`${(settings.closureDurationMs / 1000).toFixed(1)} seconds`} onDecrease={() => adjust('closureDurationMs', -250, 750, 4000)} onIncrease={() => adjust('closureDurationMs', 250, 750, 4000)} />
+      <Text style={styles.screenIntro}>Make your co-pilot feel right for you. Adjust when an eye closure becomes an alert.</Text>
+      <Stepper label="Eye-closed probability" description="An eye is considered closed below this probability. Lower values may be less sensitive." value={settings.eyeClosedProbability} min={0.10} max={0.50} display={settings.eyeClosedProbability.toFixed(2)} onDecrease={() => adjust('eyeClosedProbability', -0.05, 0.10, 0.50)} onIncrease={() => adjust('eyeClosedProbability', 0.05, 0.10, 0.50)} />
+      <Stepper label="Closure duration" description="How long both eyes must remain below the threshold before an alert." value={settings.closureDurationMs} min={750} max={4000} display={`${(settings.closureDurationMs / 1000).toFixed(1)} seconds`} onDecrease={() => adjust('closureDurationMs', -250, 750, 4000)} onIncrease={() => adjust('closureDurationMs', 250, 750, 4000)} />
       <View style={styles.card}>
         <ToggleRow label="Voice warning" description="Speak a warning through the phone speaker." value={settings.audioAlerts} onToggle={() => setSettings((p) => ({ ...p, audioAlerts: !p.audioAlerts }))} />
         <View style={styles.rowDivider} />
         <ToggleRow label="Vibration" description="Vibrate the phone when an alert is raised." value={settings.vibrationAlerts} onToggle={() => setSettings((p) => ({ ...p, vibrationAlerts: !p.vibrationAlerts }))} />
       </View>
-      <View style={styles.noticeCard}>
-        <Text style={styles.noticeTitle}>Processing & privacy</Text>
-        <Text style={styles.noticeText}>Face analysis happens on the phone. The app stores alert metadata locally and does not upload images or video. A background monitoring service is not included; keep the app open while monitoring.</Text>
-      </View>
-      <PrimaryButton title="Test audible warning" onPress={onTestAlert} />
+      <View style={styles.noticeCard}><Ionicons name="lock-closed-outline" size={21} color={C.amber} /><View style={{ flex: 1 }}><Text style={styles.noticeTitle}>Private by design</Text><Text style={styles.noticeText}>Analysis happens on your phone. Alert history is kept locally and never automatically deleted. Uninstalling the app or clearing its device storage removes local data. Keep the app open while monitoring.</Text></View></View>
+      <PrimaryButton title="Try your alert" icon="volume-high-outline" onPress={onTestAlert} />
     </ScrollView>
   );
 }
 
 function TabBar({ tab, onTab, monitoring }) {
   const tabs = [
-    { key: 'home', label: 'Home', glyph: '⌂' },
-    { key: 'monitor', label: 'Monitor', glyph: '◉' },
-    { key: 'history', label: 'History', glyph: '≡' },
-    { key: 'settings', label: 'Settings', glyph: '⚙' },
+    { key: 'home', label: 'Home', icon: 'home-outline', activeIcon: 'home' },
+    { key: 'monitor', label: 'Monitor', icon: 'scan-outline', activeIcon: 'scan' },
+    { key: 'history', label: 'Journal', icon: 'albums-outline', activeIcon: 'albums' },
+    { key: 'settings', label: 'Settings', icon: 'options-outline', activeIcon: 'options' },
   ];
   return (
-    <View style={styles.tabBar}>
+    <View style={styles.tabBar} accessibilityRole="tablist">
       {tabs.map((item) => {
         const selected = tab === item.key;
-        return (
-          <TouchableOpacity key={item.key} style={styles.tabItem} onPress={() => onTab(item.key)} activeOpacity={0.8}>
-            <View style={[styles.tabGlyphBox, selected && styles.tabGlyphBoxSelected]}><Text style={[styles.tabGlyph, selected && styles.tabGlyphSelected]}>{item.glyph}</Text></View>
-            <Text style={[styles.tabLabel, selected && styles.tabLabelSelected]}>{item.label}</Text>
-            {item.key === 'monitor' && monitoring ? <View style={styles.tabLiveDot} /> : null}
-          </TouchableOpacity>
-        );
+        return <TouchableOpacity key={item.key} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={item.label} style={styles.tabItem} onPress={() => onTab(item.key)} activeOpacity={0.8}><View style={[styles.tabGlyphBox, selected && styles.tabGlyphBoxSelected]}><Ionicons name={selected ? item.activeIcon : item.icon} size={22} color={selected ? C.teal : C.muted} /></View><Text style={[styles.tabLabel, selected && styles.tabLabelSelected]}>{item.label}</Text>{item.key === 'monitor' && monitoring ? <View style={styles.tabLiveDot} /> : null}</TouchableOpacity>;
       })}
     </View>
   );
@@ -542,37 +499,76 @@ export default function App() {
   const [monitoring, setMonitoring] = useState(false);
   const [events, setEvents] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyReadError, setHistoryReadError] = useState(null);
+  const [historyWriteError, setHistoryWriteError] = useState(null);
+  const [pendingCount, setPendingCount] = useState(0);
+  const pendingEventsRef = useRef(new Map());
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const savedEvents = await readEvents();
+      setEvents((current) => mergeEvents(current, savedEvents));
+      setHistoryLoaded(true);
+      setHistoryReadError(null);
+    } catch (error) {
+      console.warn('Unable to read event history', error);
+      setHistoryReadError('Your saved journal could not be loaded. Existing records are kept untouched.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const savedEvents = await readEvents();
-      let savedSettings = null;
       try {
         const raw = await AsyncStorage.getItem(STORAGE_SETTINGS);
-        savedSettings = raw ? JSON.parse(raw) : null;
+        const saved = raw ? JSON.parse(raw) : null;
+        if (alive && saved && typeof saved === 'object' && !Array.isArray(saved)) {
+          setSettings((current) => ({ ...current, ...saved }));
+        }
+        if (alive) setSettingsLoaded(true);
       } catch (error) {
         console.warn('Unable to read settings', error);
-      }
-      if (alive) {
-        setEvents(savedEvents);
-        if (savedSettings) setSettings((previous) => ({ ...previous, ...savedSettings }));
       }
     })();
     return () => { alive = false; };
   }, []);
 
   useEffect(() => {
+    if (!settingsLoaded) return;
     AsyncStorage.setItem(STORAGE_SETTINGS, JSON.stringify(settings)).catch((error) => console.warn('Unable to save settings', error));
-  }, [settings]);
+  }, [settings, settingsLoaded]);
+
+  const persistEvent = useCallback(async (event) => {
+    try {
+      await appendEvent(event);
+      pendingEventsRef.current.delete(event.id);
+      setPendingCount(pendingEventsRef.current.size);
+      if (pendingEventsRef.current.size === 0) setHistoryWriteError(null);
+    } catch (error) {
+      console.warn('Unable to save event history', error);
+      setHistoryWriteError('Some alerts have not been saved yet. Keep the app open and tap Retry.');
+    }
+  }, []);
 
   const addEvent = useCallback((event) => {
-    setEvents((previous) => {
-      const next = [event, ...previous].slice(0, 100);
-      writeEvents(next);
-      return next;
-    });
-  }, []);
+    pendingEventsRef.current.set(event.id, event);
+    setPendingCount(pendingEventsRef.current.size);
+    setEvents((current) => mergeEvents([event], current));
+    persistEvent(event);
+  }, [persistEvent]);
+
+  const retryHistory = useCallback(() => {
+    if (historyReadError) loadHistory();
+    pendingEventsRef.current.forEach((event) => { persistEvent(event); });
+  }, [historyReadError, loadHistory, persistEvent]);
 
   const startMonitoring = useCallback(async () => {
     try {
@@ -598,9 +594,7 @@ export default function App() {
   }, []);
 
   const changeTab = useCallback((nextTab) => {
-    if (monitoring && nextTab !== 'monitor') {
-      stopMonitoring();
-    }
+    if (monitoring && nextTab !== 'monitor') stopMonitoring();
     setTab(nextTab);
   }, [monitoring, stopMonitoring]);
 
@@ -613,152 +607,27 @@ export default function App() {
     if (!settings.audioAlerts && !settings.vibrationAlerts) Alert.alert('Alerts disabled', 'Enable voice warning or vibration in Settings to test an alert.');
   }, [settings.audioAlerts, settings.vibrationAlerts]);
 
-  const clearHistory = useCallback(() => {
-    Alert.alert('Clear event history?', 'This removes saved alert records from this phone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Clear history', style: 'destructive', onPress: async () => {
-        setEvents([]);
-        await AsyncStorage.removeItem(STORAGE_EVENTS);
-      } },
-    ]);
-  }, []);
-
-  const headerSubtitle = useMemo(() => monitoring ? 'REAL-TIME SESSION' : 'DRIVER SAFETY / MOBILE AI', [monitoring]);
-
   return (
-    <View style={styles.appRoot}>
-      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
-      <ExpoStatusBar style="dark" />
+    <SafeAreaView style={styles.appRoot}>
+      <StatusBar barStyle="dark-content" backgroundColor={C.bg} translucent={false} />
+      <ExpoStatusBar style="dark" backgroundColor={C.bg} translucent={false} />
       <View style={styles.topBar}>
-        <TouchableOpacity style={styles.topBrand} onPress={() => changeTab('home')} activeOpacity={0.85}>
-          <View style={styles.topBrandMark}><Text style={styles.topBrandMarkText}>DG</Text></View>
-          <View><Text style={styles.topBrandName}>DROWSYGUARD</Text><Text style={styles.topBrandSubtitle}>{headerSubtitle}</Text></View>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="DrowsyGuard home" style={styles.topBrand} onPress={() => changeTab('home')} activeOpacity={0.85}>
+          <View style={styles.topBrandMark}><Ionicons name="shield-checkmark" size={24} color={C.mint} /></View>
+          <View style={{ flexShrink: 1 }}><Text style={styles.topBrandName}>DrowsyGuard</Text><Text style={styles.topBrandSubtitle}>{monitoring ? 'YOUR FOCUS, LIVE' : 'YOUR EVERYDAY CO-PILOT'}</Text></View>
         </TouchableOpacity>
-        <View style={styles.localBadge}><View style={styles.localDot} /><Text style={styles.localBadgeText}>LOCAL</Text></View>
+        <View style={styles.localBadge}><LiveDot active={monitoring} /><Text style={styles.localBadgeText}>{monitoring ? 'Live' : 'On device'}</Text></View>
       </View>
-
       <View style={styles.mainContent}>
-        {tab === 'home' ? <DashboardScreen events={events} onStart={startMonitoring} onTab={changeTab} /> : null}
-        {tab === 'monitor' ? <MonitorScreen monitoring={monitoring} settings={settings} onStart={startMonitoring} onStop={stopMonitoring} onNewEvent={addEvent} onTestAlert={testAlert} /> : null}
-        {tab === 'history' ? <HistoryScreen events={events} onClear={clearHistory} /> : null}
-        {tab === 'settings' ? <SettingsScreen settings={settings} setSettings={setSettings} onTestAlert={testAlert} /> : null}
+        {historyReadError || historyWriteError ? <View style={styles.storageBanner} accessibilityLiveRegion="polite"><Ionicons name="alert-circle-outline" size={20} color={C.coral} /><Text style={styles.storageBannerText}>{[historyReadError, historyWriteError].filter(Boolean).join(' ')}</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry saving or loading history" onPress={retryHistory}><Text style={styles.retryText}>Retry</Text></TouchableOpacity></View> : null}
+        <ScreenEntrance key={tab} style={{ flex: 1 }}>
+          {tab === 'home' ? <DashboardScreen events={events} historyLoaded={historyLoaded} onStart={startMonitoring} onTab={changeTab} /> : null}
+          {tab === 'monitor' ? <MonitorScreen monitoring={monitoring} settings={settings} onStart={startMonitoring} onStop={stopMonitoring} onNewEvent={addEvent} onTestAlert={testAlert} /> : null}
+          {tab === 'history' ? <HistoryScreen events={events} historyLoaded={historyLoaded} historyLoading={historyLoading} pendingCount={pendingCount} /> : null}
+          {tab === 'settings' ? <SettingsScreen settings={settings} setSettings={setSettings} onTestAlert={testAlert} /> : null}
+        </ScreenEntrance>
       </View>
       <TabBar tab={tab} onTab={changeTab} monitoring={monitoring} />
-    </View>
+    </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  appRoot: { flex: 1, backgroundColor: C.bg },
-  topBar: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.bg },
-  topBrand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  topBrandMark: { width: 39, height: 39, borderRadius: 12, backgroundColor: C.dark, alignItems: 'center', justifyContent: 'center' },
-  topBrandMarkText: { color: '#FFFFFF', fontWeight: '900', fontSize: 12, letterSpacing: 0.5 },
-  topBrandName: { color: C.text, fontSize: 13, fontWeight: '900', letterSpacing: 1.15 },
-  topBrandSubtitle: { marginTop: 3, color: C.muted, fontSize: 9, fontWeight: '700', letterSpacing: 1 },
-  localBadge: { paddingHorizontal: 9, paddingVertical: 7, borderRadius: 20, backgroundColor: '#E0E3E6', flexDirection: 'row', alignItems: 'center', gap: 6 },
-  localDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.softDark },
-  localBadgeText: { fontSize: 9, letterSpacing: 1, color: C.dark, fontWeight: '900' },
-  mainContent: { flex: 1 },
-  screenContent: { padding: 18, paddingBottom: 26, gap: 16 },
-  heroCard: { padding: 20, borderRadius: 23, backgroundColor: C.dark, overflow: 'hidden' },
-  heroTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
-  brandMark: { width: 43, height: 43, borderRadius: 14, backgroundColor: '#555A61', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#696E75' },
-  brandMarkText: { color: '#FFFFFF', fontSize: 13, fontWeight: '900' },
-  pillDark: { backgroundColor: '#4B5057', borderWidth: 1, borderColor: '#666B72', paddingHorizontal: 9, paddingVertical: 6, borderRadius: 20 },
-  pillSoft: { backgroundColor: '#E1E4E7', borderWidth: 1, borderColor: '#D1D5DA', paddingHorizontal: 9, paddingVertical: 6, borderRadius: 20 },
-  pill: { backgroundColor: '#E9EBEE', borderWidth: 1, borderColor: C.border, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 20 },
-  pillText: { color: C.dark, fontSize: 9, fontWeight: '900', letterSpacing: 0.65 },
-  pillTextLight: { color: '#FFFFFF', fontSize: 9, fontWeight: '900', letterSpacing: 0.65 },
-  heroEyebrow: { color: '#C5C9CE', fontSize: 10, fontWeight: '800', letterSpacing: 1.8 },
-  heroTitle: { marginTop: 9, color: '#FFFFFF', fontSize: 32, lineHeight: 37, fontWeight: '900', letterSpacing: -0.8 },
-  heroCopy: { marginTop: 12, color: '#D3D6DA', fontSize: 13, lineHeight: 20, maxWidth: 330 },
-  buttonPrimary: { marginTop: 19, minHeight: 48, paddingHorizontal: 17, paddingVertical: 13, borderRadius: 13, backgroundColor: '#F0F1F2', alignItems: 'center', justifyContent: 'center' },
-  buttonPrimaryText: { color: C.darker, fontSize: 13, fontWeight: '900', letterSpacing: 0.15 },
-  buttonSecondary: { minHeight: 47, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 13, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
-  buttonSecondaryText: { color: C.text, fontSize: 13, fontWeight: '800' },
-  buttonCompact: { minHeight: 38, paddingVertical: 8, marginTop: 0 },
-  buttonDisabled: { backgroundColor: C.disabled, borderColor: C.disabled },
-  buttonTextDisabled: { color: '#6B7077' },
-  heroFootnote: { marginTop: 13, color: '#BFC4CA', fontSize: 10, lineHeight: 15 },
-  statGrid: { flexDirection: 'row', gap: 10 },
-  statCard: { flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 17, padding: 14 },
-  statLabel: { fontSize: 9, letterSpacing: 1.15, fontWeight: '900', color: C.muted },
-  statValue: { marginTop: 10, color: C.text, fontSize: 23, fontWeight: '900' },
-  statSubtitle: { marginTop: 4, color: C.lightMuted, fontSize: 10 },
-  sectionHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 3 },
-  sectionTitle: { color: C.text, fontSize: 16, fontWeight: '900', letterSpacing: -0.2 },
-  sectionAction: { color: C.muted, fontSize: 11, fontWeight: '800' },
-  card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 17, paddingHorizontal: 15, paddingVertical: 3 },
-  infoRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 14, gap: 12 },
-  numberChip: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#EAECF0', alignItems: 'center', justifyContent: 'center' },
-  numberChipText: { color: C.dark, fontSize: 10, fontWeight: '900' },
-  infoBody: { flex: 1, paddingTop: 1 },
-  infoTitle: { fontSize: 12, color: C.text, fontWeight: '900' },
-  infoText: { marginTop: 5, fontSize: 11, lineHeight: 17, color: C.muted },
-  rowDivider: { height: 1, backgroundColor: '#E8EAED' },
-  noticeCard: { borderRadius: 15, borderWidth: 1, borderColor: '#C9CDD2', backgroundColor: '#E3E6E9', padding: 15 },
-  noticeTitle: { fontSize: 12, color: C.dark, fontWeight: '900' },
-  noticeText: { marginTop: 5, fontSize: 11, lineHeight: 17, color: '#555B62' },
-  screenHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  screenEyebrow: { color: C.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1.8 },
-  screenTitle: { marginTop: 4, color: C.text, fontSize: 28, fontWeight: '900', letterSpacing: -0.6 },
-  screenIntro: { color: C.muted, fontSize: 12, lineHeight: 18, marginTop: -5 },
-  cameraFrame: { width: '100%', height: 320, borderRadius: 21, overflow: 'hidden', backgroundColor: '#16181B', borderWidth: 1, borderColor: '#42464C' },
-  cameraPlaceholder: { flex: 1, padding: 25, alignItems: 'center', justifyContent: 'center' },
-  cameraGlyph: { width: 65, height: 65, borderRadius: 22, borderWidth: 1, borderColor: '#5A6068', backgroundColor: '#292D32', alignItems: 'center', justifyContent: 'center' },
-  cameraGlyphText: { color: '#E1E4E7', fontSize: 38, fontWeight: '300' },
-  cameraPlaceholderTitle: { marginTop: 17, color: '#F4F5F6', fontSize: 15, fontWeight: '900' },
-  cameraPlaceholderText: { marginTop: 8, color: '#B9BEC5', fontSize: 11, lineHeight: 17, textAlign: 'center', maxWidth: 250 },
-  cameraOverlayTop: { position: 'absolute', top: 12, left: 12, right: 12, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: 'rgba(28,30,33,0.72)' },
-  cameraOverlayText: { color: '#F3F4F6', fontSize: 9, letterSpacing: 1, fontWeight: '900' },
-  statusCard: { backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 17, padding: 15 },
-  statusHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  statusDot: { width: 9, height: 9, borderRadius: 5 },
-  statusDotDark: { backgroundColor: '#22262B' },
-  statusDotLight: { backgroundColor: '#9299A1' },
-  statusDotMuted: { backgroundColor: '#C5CAD0' },
-  statusTitle: { flex: 1, color: C.text, fontSize: 13, fontWeight: '900' },
-  statusTime: { color: C.dark, fontSize: 12, fontWeight: '900', fontVariant: ['tabular-nums'] },
-  statusDescription: { marginTop: 8, color: C.muted, fontSize: 11, lineHeight: 17 },
-  metricDivider: { marginTop: 13, marginBottom: 12, height: 1, backgroundColor: '#E6E8EB' },
-  metricRow: { flexDirection: 'row', gap: 7 },
-  metricBlock: { flex: 1 },
-  metricLabel: { color: C.lightMuted, fontSize: 8, letterSpacing: 0.6, fontWeight: '900' },
-  metricValue: { marginTop: 5, color: C.text, fontSize: 14, fontWeight: '900' },
-  twoButtons: { flexDirection: 'row', gap: 9 },
-  helperText: { marginTop: -4, color: C.muted, fontSize: 10, lineHeight: 16 },
-  emptyCard: { paddingHorizontal: 24, paddingVertical: 35, alignItems: 'center', justifyContent: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 17 },
-  emptyGlyph: { fontSize: 38, color: C.lightMuted },
-  emptyTitle: { marginTop: 9, color: C.text, fontSize: 15, fontWeight: '900' },
-  emptyCopy: { marginTop: 7, textAlign: 'center', color: C.muted, fontSize: 11, lineHeight: 17 },
-  eventRow: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 14 },
-  eventIcon: { width: 34, height: 34, borderRadius: 11, backgroundColor: '#E6E8EB', alignItems: 'center', justifyContent: 'center' },
-  eventIconText: { color: C.dark, fontWeight: '900', fontSize: 17 },
-  eventBody: { flex: 1 },
-  eventTitle: { color: C.text, fontSize: 12, fontWeight: '900' },
-  eventSub: { marginTop: 3, color: C.muted, fontSize: 10 },
-  eventDuration: { color: C.dark, fontSize: 12, fontWeight: '900' },
-  settingCard: { padding: 15, backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 16 },
-  settingTitle: { color: C.text, fontSize: 12, fontWeight: '900' },
-  settingDescription: { color: C.muted, fontSize: 10, lineHeight: 16, marginTop: 5 },
-  stepperRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 13, gap: 12 },
-  stepperButton: { height: 39, width: 48, borderRadius: 12, backgroundColor: '#E6E8EB', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.border },
-  stepperGlyph: { fontSize: 22, color: C.dark, fontWeight: '600', marginTop: -1 },
-  stepperValue: { flex: 1, color: C.text, textAlign: 'center', fontSize: 14, fontWeight: '900' },
-  toggleRow: { paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  toggleBody: { flex: 1 },
-  toggleTrack: { width: 44, height: 26, padding: 3, borderRadius: 20, backgroundColor: '#D4D8DD', justifyContent: 'center' },
-  toggleTrackOn: { backgroundColor: '#4C5158' },
-  toggleKnob: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#B9BEC5' },
-  toggleKnobOn: { alignSelf: 'flex-end', borderColor: '#FFFFFF' },
-  tabBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingTop: 9, paddingBottom: 9, paddingHorizontal: 8, backgroundColor: '#F8F9FA', borderTopWidth: 1, borderTopColor: C.border },
-  tabItem: { position: 'relative', alignItems: 'center', justifyContent: 'center', minWidth: 59, gap: 3 },
-  tabGlyphBox: { width: 36, height: 29, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  tabGlyphBoxSelected: { backgroundColor: '#E1E4E8' },
-  tabGlyph: { color: C.muted, fontSize: 19, fontWeight: '700' },
-  tabGlyphSelected: { color: C.darker },
-  tabLabel: { color: C.muted, fontSize: 9, fontWeight: '700' },
-  tabLabelSelected: { color: C.text, fontWeight: '900' },
-  tabLiveDot: { position: 'absolute', top: 1, right: 7, width: 6, height: 6, borderRadius: 3, backgroundColor: C.dark },
-});

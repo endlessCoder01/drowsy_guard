@@ -9,7 +9,10 @@
     "prebuild:android": "expo prebuild --platform android",
     "doctor": "expo-doctor",
     "ios": "expo run:ios",
-    "test:history": "node scripts/test-event-history.cjs && node scripts/test-app-history.cjs"
+    "test:history": "node scripts/test-event-history.cjs && node scripts/test-app-history.cjs",
+    "test:drive": "node scripts/test-drive-session.cjs",
+    "test": "npm run test:history && npm run test:drive && npm run test:android-config",
+    "test:android-config": "node scripts/test-windows-native-build.cjs"
   },
   "dependencies": {
     "@expo/vector-icons": "~14.0.4",

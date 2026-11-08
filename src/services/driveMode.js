@@ -1,4 +1,4 @@
-import { NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from 'react-native';
+import { NativeEventEmitter, NativeModules, PermissionsAndroid, Platform, Vibration } from 'react-native';
 
 const native = Platform.OS === 'android' ? NativeModules.DrowsyGuardDriveMode : null;
 let nativeQueue = Promise.resolve();
@@ -6,7 +6,7 @@ const unsupportedStatus = () => ({
   available: false, focusSupported: false, policyAccessGranted: false,
   bluetoothPermissionGranted: false, bluetoothCallConnected: false,
   bluetoothCallRouteActive: false, sessionActive: false, focusActive: false,
-  focusStateConfirmed: false,
+  focusStateConfirmed: false, quietRequested: false,
   reason: Platform.OS === 'ios'
     ? 'Use Driving Focus in iPhone Settings to silence notifications.'
     : Platform.OS === 'web' ? 'Quiet drive is available in the Android app.'
@@ -54,4 +54,22 @@ export async function requestBluetoothPermission() {
 export function openNotificationPolicySettings() {
   if (!native) return Promise.resolve(unsupportedStatus());
   return native.openNotificationPolicySettings();
+}
+
+export function vibrateAlert(pattern) {
+  if (!native?.vibrateAlert) { Vibration.vibrate(pattern); return; }
+  native.vibrateAlert(pattern).catch((error) => console.warn('Unable to vibrate alert', error));
+}
+
+export function cancelAlertVibration() {
+  native?.cancelAlertVibration?.();
+  Vibration.cancel();
+}
+
+export function describeDriveStatus(status) {
+  if (status?.cleanupPending) return 'Drive focus needs attention · Check Do Not Disturb settings';
+  if (!status?.sessionActive || !status.quietRequested) return 'Full-screen monitor · Notifications follow your phone settings';
+  const focus = status.focusActive && status.focusStateConfirmed ? 'Quiet drive active' : 'Quiet drive requested';
+  const calls = status.bluetoothCallConnected ? 'Bluetooth headset connected' : 'Call interruptions silenced';
+  return `${focus} · Music allowed · ${calls}`;
 }

@@ -4,6 +4,7 @@ const {
   AndroidConfig,
   withAndroidManifest,
   withDangerousMod,
+  withGradleProperties,
   withMainApplication,
 } = require('@expo/config-plugins');
 
@@ -16,6 +17,7 @@ module.exports = function withDriveMode(config) {
     const permissions = manifest['uses-permission'] || (manifest['uses-permission'] = []);
     for (const permission of [
       { 'android:name': 'android.permission.ACCESS_NOTIFICATION_POLICY' },
+      { 'android:name': 'android.permission.VIBRATE' },
       { 'android:name': 'android.permission.BLUETOOTH', 'android:maxSdkVersion': '30' },
       { 'android:name': 'android.permission.BLUETOOTH_CONNECT' },
     ]) {
@@ -42,6 +44,19 @@ module.exports = function withDriveMode(config) {
         ],
       });
     }
+    return mod;
+  });
+
+  // Expo's base template otherwise defaults to API 24, while this app's face
+  // detector requires API 26. Preserve a higher existing project minimum.
+  config = withGradleProperties(config, (mod) => {
+    const key = 'android.minSdkVersion';
+    const existing = mod.modResults.find((entry) => entry.type === 'property' && entry.key === key);
+    const configured = Number(config.android?.minSdkVersion);
+    const previous = Number(existing?.value);
+    const minimum = Math.max(26, Number.isInteger(configured) ? configured : 26, Number.isInteger(previous) ? previous : 26);
+    if (existing) existing.value = String(minimum);
+    else mod.modResults.push({ type: 'property', key, value: String(minimum) });
     return mod;
   });
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Vibration } from 'react-native';
 import * as Speech from 'expo-speech';
+import { vibrateAlert } from '../services/driveMode';
 import { C } from '../ui/theme';
 import {
   EYE_MODEL, Worklets, useCameraDevice, useFaceDetector,
@@ -47,7 +47,7 @@ export default function useEyeMonitoring({ monitoring, settings, onNewEvent }) {
         onError: () => { speakingRef.current = false; },
       });
     }
-    if (settings.vibrationAlerts) Vibration.vibrate([0, 450, 220, 450]);
+    if (settings.vibrationAlerts) vibrateAlert([0, 450, 220, 450]);
   }, [settings.audioAlerts, settings.vibrationAlerts]);
 
   const handleFacesDetected = useCallback((faces) => {

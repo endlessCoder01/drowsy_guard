@@ -5,7 +5,7 @@ import { C, styles } from '../ui/theme';
 import { Pill, PrimaryButton, SectionTitle, StatCard, EventRow, InfoRow } from '../components';
 import { RadarVisual } from '../ui/Visuals';
 
-export default function DashboardScreen({ events, historyLoaded, onStart, onTab }) {
+export default function DashboardScreen({ events, historyLoaded, onStart, onTab, starting = false }) {
   const lastEvent = events[0];
   const today = new Date().toDateString();
   const todayCount = events.filter((event) => new Date(event.timestamp).toDateString() === today).length;
@@ -17,7 +17,7 @@ export default function DashboardScreen({ events, historyLoaded, onStart, onTab 
         <Text style={styles.heroTitle}>Stay present.{'\n'}<Text style={styles.heroAccent}>Go further.</Text></Text>
         <Text style={styles.heroCopy}>A watchful eye for the road ahead. Get a gentle heads-up when your eyes stay closed too long.</Text>
         <RadarVisual />
-        <PrimaryButton title="Let's start monitoring" icon="scan-outline" onPress={onStart} />
+        <PrimaryButton title={starting ? 'Opening camera...' : "Let's start monitoring"} disabled={starting} icon="scan-outline" onPress={onStart} />
         <Text style={styles.heroFootnote}>Mount your phone. Keep your face in view.</Text>
       </View>
       <View style={styles.statGrid}>

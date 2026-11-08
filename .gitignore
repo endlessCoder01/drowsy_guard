@@ -1,7 +1,8 @@
 node_modules/
 .expo/
-android/
-ios/
+/android/
+/ios/
+/dist/_expo/
 *.log
 ml_training/data/
 ml_training/output/

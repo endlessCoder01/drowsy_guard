@@ -16,6 +16,8 @@
       }
     },
     "plugins": [
+      "./plugins/withWindowsNativeBuild",
+      "./plugins/withDriveMode",
       [
         "react-native-vision-camera",
         {

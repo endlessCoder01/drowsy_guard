@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Vibration } from 'react-native';
+import { AppState } from 'react-native';
 import * as Speech from 'expo-speech';
 import { VisionCamera, nativeCameraModulesAvailable } from '../services/cameraRuntime';
-import { getDriveStatus, startDriveMode, stopDriveMode, requestBluetoothPermission, subscribeToDriveStatus } from '../services/driveMode';
+import { getDriveStatus, startDriveMode, stopDriveMode, requestBluetoothPermission, subscribeToDriveStatus, cancelAlertVibration } from '../services/driveMode';
 
 function sessionError(code, message) {
   const error = new Error(message);
@@ -10,6 +10,7 @@ function sessionError(code, message) {
   return error;
 }
 const foreground = () => !AppState.currentState || AppState.currentState === 'active';
+const cameraGranted = (permission) => permission === 'granted' || permission === 'authorized';
 
 export default function useDriveSession() {
   const [monitoring, setMonitoring] = useState(false);
@@ -22,12 +23,16 @@ export default function useDriveSession() {
   const monitoringRef = useRef(false);
   const startingRef = useRef(false);
   const nativeStarting = useRef(false);
+  const permissionRequest = useRef(null);
 
   const refreshStatus = useCallback(async () => {
     const revision = ++statusRevision.current;
     try {
       const status = await getDriveStatus();
-      if (mounted.current && revision === statusRevision.current) setDriveStatus(status);
+      if (mounted.current && revision === statusRevision.current) {
+        setDriveStatus(status);
+        if (status.cleanupPending) setDriveError(status.reason || 'Drive focus cleanup needs attention. Check Do Not Disturb settings.');
+      }
       return status;
     } catch (error) {
       if (mounted.current && revision === statusRevision.current) setDriveError(error.message);
@@ -41,8 +46,11 @@ export default function useDriveSession() {
     monitoringRef.current = false;
     startingRef.current = false;
     nativeStarting.current = false;
+    const pendingPermission = permissionRequest.current;
+    permissionRequest.current = null;
+    pendingPermission?.resume?.();
     Speech.stop();
-    Vibration.cancel();
+    cancelAlertVibration();
     if (mounted.current) { setMonitoring(false); setStarting(false); }
     try {
       const status = await stopDriveMode();
@@ -51,7 +59,7 @@ export default function useDriveSession() {
         setDriveError(null);
       }
     } catch (error) {
-      if (mounted.current) setDriveError('Could not restore drive focus. Check Do Not Disturb in Android Settings.');
+      if (mounted.current && stoppedGeneration === generation.current) setDriveError('Could not restore drive focus. Check Do Not Disturb in Android Settings.');
       console.warn('Unable to stop drive mode', error);
     }
   }, []);
@@ -60,22 +68,41 @@ export default function useDriveSession() {
     if (startingRef.current || monitoringRef.current) return false;
     const currentGeneration = ++generation.current;
     ++statusRevision.current;
-    const current = () => mounted.current && currentGeneration === generation.current && foreground();
+    const valid = () => mounted.current && currentGeneration === generation.current;
+    const current = () => valid() && foreground();
+    const askPermission = async (request) => {
+      const pending = { resume: null };
+      permissionRequest.current = pending;
+      try {
+        return await request();
+      } finally {
+        // Android permission activities pause the app. Resume setup only after
+        // returning to the foreground; Stop/unmount still cancels this start.
+        if (valid() && !foreground()) {
+          await new Promise((resolve) => {
+            pending.resume = resolve;
+            if (!valid() || foreground()) resolve();
+          });
+        }
+        if (permissionRequest.current === pending) permissionRequest.current = null;
+      }
+    };
     startingRef.current = true;
     setStarting(true);
     setDriveError(null);
     try {
       if (!nativeCameraModulesAvailable) throw sessionError('E_CAMERA_UNAVAILABLE', 'Live monitoring requires the DrowsyGuard development build.');
-      const permission = await VisionCamera.requestCameraPermission();
+      let permission = VisionCamera.getCameraPermissionStatus();
+      if (!cameraGranted(permission)) permission = await askPermission(() => VisionCamera.requestCameraPermission());
       if (!current()) return false;
-      if (permission !== 'granted' && permission !== 'authorized') throw sessionError('E_CAMERA_PERMISSION', 'Allow camera access in phone Settings to start monitoring.');
+      if (!cameraGranted(permission)) throw sessionError('E_CAMERA_PERMISSION', 'Allow camera access in phone Settings to start monitoring.');
       const status = await getDriveStatus();
       if (!current()) return false;
       if (enableQuiet) {
         if (!status.available) throw sessionError('E_DRIVE_UNAVAILABLE', status.reason);
         if (!status.focusSupported) throw sessionError('E_FOCUS_UNSUPPORTED', 'Quiet drive requires Android 10 or later. Full-screen monitoring is still available.');
         if (!status.policyAccessGranted) throw sessionError('E_POLICY_ACCESS', 'Allow Do Not Disturb access to reduce notifications while monitoring.');
-        await requestBluetoothPermission();
+        await askPermission(requestBluetoothPermission);
         if (!current()) return false;
       }
       nativeStarting.current = true;
@@ -114,8 +141,9 @@ export default function useDriveSession() {
     refreshStatus();
     const appStateSubscription = AppState.addEventListener('change', (state) => {
       if (state !== 'active') {
-        if (monitoringRef.current || nativeStarting.current) stopSession();
+        if (!permissionRequest.current && (monitoringRef.current || startingRef.current || nativeStarting.current)) stopSession();
       } else {
+        permissionRequest.current?.resume?.();
         refreshStatus();
       }
     });
@@ -123,6 +151,7 @@ export default function useDriveSession() {
       if (!mounted.current) return;
       ++statusRevision.current;
       setDriveStatus(status);
+      if (status.cleanupPending) setDriveError(status.reason || 'Drive focus cleanup needs attention. Check Do Not Disturb settings.');
       if (monitoringRef.current && !status.sessionActive) stopSession();
     });
     return () => {

@@ -19,7 +19,7 @@ export const styles = StyleSheet.create({
   localBadge: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 20, backgroundColor: C.tealSoft, flexDirection: 'row', alignItems: 'center', gap: 6 },
   localDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.teal },
   localBadgeText: { fontSize: 10, color: C.teal, fontWeight: '800' },
-  mainContent: { flex: 1, width: '100%', maxWidth: 680, alignSelf: 'center' },
+  mainContent: { flex: 1, width: '100%' },
   screenContent: { padding: 18, paddingTop: 8, paddingBottom: 28, gap: 18 },
   greeting: { color: C.muted, fontSize: 14, lineHeight: 21 },
   greetingTitle: { marginTop: 3, color: C.text, fontSize: 25, fontWeight: '800', letterSpacing: -0.7 },

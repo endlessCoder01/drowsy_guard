@@ -2,11 +2,11 @@
 
 A colourful, offline-first driver drowsiness research prototype. It uses a phone's front camera, on-device face/eye classification, a prolonged-closure timer, spoken warning, vibration and persistent local event history. No IoT components, paid API, cloud server or account are needed for the core app.
 
-> **Scope note:** The mobile runtime currently uses Google ML Kit eye-open probabilities provided by `react-native-vision-camera-face-detector`. The `ml_training/` folder includes the CNN training/evaluation/export path required for dissertation experimentation, but the custom trained CNN is not bundled or connected to the live camera pipeline. The current app is not yet a custom-CNN + Eye Aspect Ratio implementation. See `docs/SYSTEM_DESIGN.md`.
+> **Scope note:** ML Kit locates the face and the bundled TensorFlow Lite model classifies eye crops. ML Kit eye-open scores provide a fallback when the model is unavailable. The `ml_training/` folder contains the training/evaluation/export workflow. This remains a research prototype; model performance needs independent validation.
 
 ## What's included
 
-- JavaScript-only React Native application (no TypeScript source files).
+- Reusable React Native components, screens and hooks in JavaScript, plus a small Android Kotlin drive-focus module.
 - Refreshed Home, Monitor, Event History and Settings screens.
 - Front camera live preview, ML Kit face localization and custom CNN eye-crop classification.
 - Configurable eye-closure probability and duration threshold.
@@ -14,6 +14,25 @@ A colourful, offline-first driver drowsiness research prototype. It uses a phone
 - Append-only alert history in AsyncStorage, with no clear control or record limit, and local settings.
 - CNN training/evaluation/export script with accuracy, precision, recall, F1 and confusion-matrix output.
 - Functional test plan and system-design notes.
+
+## Full-screen monitoring and quiet drive
+
+The camera fills the display during monitoring, with live metrics and a visible Stop session control. Android hides the system bars and keeps the screen awake for the session. Stop, Back, leaving the app and session teardown restore the app's window settings and end its own focus rule. Return to the app and start again after a call or another foreground interruption.
+
+On Android 10 or later, **Settings → Quiet drive** can silence regular notifications while permitting media audio. Call interruptions are permitted only while a Bluetooth headset capable of calls is connected. Android controls the actual call route; this app does not answer calls or force them onto Bluetooth. Stricter existing Do Not Disturb rules remain effective, and system/DND exceptions can still appear. iPhone users must configure Driving Focus themselves.
+
+This update includes native code, so reload alone is insufficient for drive focus. Regenerate and rebuild your development app without uninstalling it, preserving saved history:
+
+```powershell
+npx expo prebuild --platform android
+npm run android
+```
+
+Then grant **Do Not Disturb access** and **Bluetooth access** through the app's Settings controls. If access is unavailable, the start dialog offers **Monitor only**, which leaves notification settings unchanged. See [drive-mode behavior and limitations](docs/DRIVE_MODE.md).
+
+`App.js` now connects the pieces: `src/screens/` contains pages, `src/components/` contains shared controls and layout, `src/hooks/` contains history/settings/monitoring/session behavior, and `src/services/` contains native interfaces. `plugins/withDriveMode.js` regenerates the native Android code, so it survives Expo prebuild.
+
+Run `npm test` for history, hydration, permission, cancellation and drive-session regression checks. Native notification, Bluetooth, audio and screen behavior still need verification on a phone.
 
 ## Requirements
 
@@ -136,6 +155,8 @@ Do not open the Metro bundle URL directly in a browser. Expo Go should scan the 
 **Live monitoring is unavailable in Expo Go**: expected; use `npx expo prebuild --platform android` followed by `npx expo run:android` to install the DrowsyGuard development build.
 
 **Build error after changing dependencies**: keep the pinned package versions initially. If you change versions, check their React Native and VisionCamera compatibility. To regenerate Android output after changing the plugin/native configuration, run `npx expo prebuild --clean --platform android`, then `npx expo run:android`.
+
+**Ninja reports `build.ninja` is still dirty after 100 tries on Windows**: the bundled Ninja can mistake an existing prefab file for a missing file when its combined path exceeds the Windows path limit. The project's `withWindowsNativeBuild` plugin shortens the Worklets and VisionCamera build caches to `android/.cxx/worklets` and `android/.cxx/camera`, preserving these settings through Expo prebuilds. Run `npm run prebuild:android`, then `npm run android` to apply it. Moving the project or clearing app history is unnecessary. See the [upstream Ninja path-length issue](https://github.com/ninja-build/ninja/issues/1535). Check the plugin with `npm run test:android-config`.
 
 **Black camera preview / no face classification**: grant Camera permission in Android Settings, close other apps using the camera, improve front lighting, face the camera and rebuild the native app after dependency changes.
 

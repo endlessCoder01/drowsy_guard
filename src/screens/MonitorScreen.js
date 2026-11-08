@@ -45,7 +45,7 @@ function ClosureMeter({ closureDuration, settings, progress, color, dark = false
   );
 }
 
-export default function MonitorScreen({ monitoring, settings, onStart, onStop, onExit, onNewEvent, onTestAlert, sessionModeLabel }) {
+export default function MonitorScreen({ monitoring, settings, onStart, onStop, onExit, onNewEvent, onTestAlert, sessionModeLabel, starting = false }) {
   const live = useEyeMonitoring({ monitoring, settings, onNewEvent });
   const { width, height } = useWindowDimensions();
   const landscape = width > height;
@@ -116,7 +116,7 @@ export default function MonitorScreen({ monitoring, settings, onStart, onStop, o
         <Text style={styles.statusDescription}>Your camera fills the screen during a session. Mount your phone and keep both eyes in view.</Text>
       </View>
       <View style={styles.twoButtons}>
-        <View style={styles.buttonCell}><PrimaryButton title="Start session" icon="scan-outline" onPress={onStart} /></View>
+        <View style={styles.buttonCell}><PrimaryButton title={starting ? 'Opening...' : 'Start session'} disabled={starting} icon="scan-outline" onPress={onStart} /></View>
         <View style={styles.buttonCell}><PrimaryButton title="Test alert" icon="volume-high-outline" onPress={onTestAlert} secondary /></View>
       </View>
       <Text style={styles.helperText}>Eye-open scores are model estimates. Sunglasses, darkness, head turns and camera angle may reduce reliability.</Text>
